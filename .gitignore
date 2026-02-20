@@ -1,0 +1,28 @@
+# General
+.DS_Store
+.vscode/
+.idea/
+
+# Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/.env
+backend/.venv
+backend/temp/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Logs and Debug
+*.log
+debug_*.txt
+backend/debug_llm_response.txt
+backend/backend_debug.log
+backend/llm_error_log.txt
+backend/available_models.txt
+backend/processed_drawing.png
+backend/uploaded_drawing.*
+backend/ocr_results.json
+backend/extracted_features.json
