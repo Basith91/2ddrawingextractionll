@@ -1,9 +1,117 @@
 import React, { useState } from 'react';
-import { Ruler, FileText, Settings, Layers } from 'lucide-react';
+import { Ruler, FileText, Settings, Layers, Download, FileSpreadsheet, File as FileIcon } from 'lucide-react';
+import axios from 'axios';
 import './FeaturesPanel.css';
 
 export default function FeaturesPanel({ features, metadata, activeFeatureId, activeViewLabel, onFeatureSelect, onViewSelect, activeTab, onTabChange }) {
-    // Local state removed, using props now
+    const [isExporting, setIsExporting] = useState(false);
+
+    const handleExport = async (format) => {
+        console.log(`handleExport called for ${format} on tab ${activeTab}`);
+
+        const isMetadata = activeTab === 'metadata';
+        const dataToExport = isMetadata ? metadata : features;
+
+        if (!dataToExport || (Array.isArray(dataToExport) && dataToExport.length === 0) || (Object.keys(dataToExport).length === 0)) {
+            console.warn(`No ${activeTab} data to export`);
+            return;
+        }
+        setIsExporting(true);
+
+        try {
+            let endpoint;
+            if (isMetadata) {
+                endpoint = format === 'pdf' ? '/export/metadata/pdf' :
+                    format === 'csv' ? '/export/metadata/csv' : '/export/metadata/excel';
+            } else {
+                endpoint = format === 'pdf' ? '/export/pdf' :
+                    format === 'csv' ? '/export/csv' : '/export/excel';
+            }
+
+            // Sanitize filename: remove characters that might cause download to fail
+            let filename = (metadata["Designation"] || "extraction_results")
+                .replace(/[<>:"/\\|?*]/g, '_') // Remove invalid filename chars
+                .trim();
+
+            if (!filename) filename = "extraction_results";
+
+            // Prepare data for export
+            const exportData = isMetadata ? {
+                metadata: metadata,
+                filename: filename
+            } : {
+                features: features.map(f => ({
+                    id: String(f.id),
+                    type: f.type || "Dimension",
+                    value: String(f.value),
+                    view: f.view || "General"
+                })),
+                filename: filename
+            };
+
+            // Hardcode localhost:8001 for consistency on the user's machine
+            const backendUrl = `http://localhost:8001${endpoint}`;
+            console.log(`Requesting export from: ${backendUrl}`);
+
+            const response = await axios.post(backendUrl, exportData, {
+                responseType: 'blob',
+                timeout: 30000 // Increase to 30s
+            });
+
+            if (!response.data || response.data.size === 0) {
+                throw new Error("Received empty file from server");
+            }
+
+            // Create download link
+            const blob = new Blob([response.data], {
+                type: format === 'pdf' ? 'application/pdf' :
+                    format === 'csv' ? 'text/csv' :
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+            const url = window.URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            const suffix = isMetadata ? "_metadata" : "";
+            link.download = `${filename}${suffix}.${format === 'excel' ? 'xlsx' : format}`;
+
+            // Required for some browsers
+            document.body.appendChild(link);
+            link.click();
+
+            // Clean up
+            setTimeout(() => {
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+
+            console.log(`${format.toUpperCase()} download triggered successfully`);
+        } catch (error) {
+            console.error(`Export to ${format} failed:`, error);
+            let msg = `Connecting failed: ${error.message}.`;
+
+            if (error.response) {
+                if (error.response.data instanceof Blob) {
+                    try {
+                        const errorText = await error.response.data.text();
+                        try {
+                            const errorJson = JSON.parse(errorText);
+                            msg = `Server Error (${error.response.status}): ${errorJson.detail || errorText}`;
+                        } catch (e) {
+                            msg = `Server Error (${error.response.status}): ${errorText.substring(0, 100)}`;
+                        }
+                    } catch (e) {
+                        msg = `Server Error (${error.response.status})`;
+                    }
+                } else {
+                    msg = `Server Error (${error.response.status}): ${JSON.stringify(error.response.data)}`;
+                }
+            }
+            alert(`Oops! Export failed.\n\n${msg}\n\nPlease ensure your backend is running.`);
+        } finally {
+            setIsExporting(false);
+        }
+    };
 
     return (
         <div className="features-panel">
@@ -27,6 +135,39 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
             </div>
 
             <div className="panel-content">
+                <div className="export-controls">
+                    <span className="export-label">Export {activeTab === 'metadata' ? 'Meta Data' : 'Features'}:</span>
+                    <div className="export-buttons">
+                        <button
+                            className="export-btn pdf"
+                            onClick={() => handleExport('pdf')}
+                            disabled={isExporting || (activeTab === 'features' ? features.length === 0 : Object.keys(metadata).length === 0)}
+                            title={`Export ${activeTab} to PDF`}
+                        >
+                            <FileIcon size={14} />
+                            <span>PDF</span>
+                        </button>
+                        <button
+                            className="export-btn csv"
+                            onClick={() => handleExport('csv')}
+                            disabled={isExporting || (activeTab === 'features' ? features.length === 0 : Object.keys(metadata).length === 0)}
+                            title={`Export ${activeTab} to CSV`}
+                        >
+                            <FileSpreadsheet size={14} />
+                            <span>CSV</span>
+                        </button>
+                        <button
+                            className="export-btn excel"
+                            onClick={() => handleExport('excel')}
+                            disabled={isExporting || (activeTab === 'features' ? features.length === 0 : Object.keys(metadata).length === 0)}
+                            title={`Export ${activeTab} to Excel (.xlsx)`}
+                        >
+                            <FileSpreadsheet size={14} />
+                            <span>Excel</span>
+                        </button>
+                    </div>
+                </div>
+
                 {activeTab === 'features' ? (
                     <div className="features-list">
                         {features.length === 0 ? (

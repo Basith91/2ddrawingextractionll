@@ -221,3 +221,72 @@
     border-bottom: 1px solid var(--border-color);
     width: 100%;
 }
+
+.export-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.export-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.export-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.export-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius-sm);
+    border: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #fff;
+}
+
+.export-btn.pdf {
+    background-color: #ef4444;
+    /* Red color for PDF */
+}
+
+.export-btn.pdf:hover {
+    background-color: #dc2626;
+}
+
+.export-btn.csv {
+    background-color: #10b981;
+    /* Green color for CSV/Excel */
+}
+
+.export-btn.csv:hover {
+    background-color: #059669;
+}
+
+.export-btn.excel {
+    background-color: #3b82f6;
+    /* Blue color for Excel */
+}
+
+.export-btn.excel:hover {
+    background-color: #2563eb;
+}
+
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: #4b5563;
+}

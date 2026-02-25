@@ -6,3 +6,6 @@ python-dotenv
 requests
 ezdxf
 matplotlib
+fpdf2
+openpyxl
+pypdfium2
