@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import io
 import csv
+import anyio
 from fastapi.responses import StreamingResponse
 from fpdf import FPDF
 import openpyxl
@@ -42,6 +43,12 @@ except Exception as e:
 # Ensure temp directory exists
 os.makedirs("temp", exist_ok=True)
 app.mount("/temp", StaticFiles(directory="temp"), name="temp")
+
+@app.get("/status")
+def get_status():
+    """Returns the current status of the LLM processor"""
+    status = getattr(LLMProcessor, '_current_status', "Ready")
+    return {"status": status}
 
 @app.get("/")
 def read_root():
@@ -81,9 +88,10 @@ def log_debug(msg):
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...), 
+    reference_file: Optional[UploadFile] = File(None),
     x_api_key: str = Header(None)
 ):
-    log_debug(f"Received upload request: {file.filename}")
+    log_debug(f"Received upload request. Primary: {file.filename}, Reference: {reference_file.filename if reference_file else 'None'}")
 
     if not file.filename.lower().endswith(('.pdf', '.png', '.jpg', '.jpeg', '.dxf')):
         log_debug("Invalid file type rejected")
@@ -102,8 +110,38 @@ async def upload_file(
         # Save uploaded file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        log_debug(f"Saved file to {file_path}")
+        log_debug(f"Saved primary file to {file_path}")
+
+        # Save reference file if provided
+        reference_image_path = None
+        reference_filename = None
+        if reference_file:
+            ref_id = f"{file_id}_ref"
+            ref_ext = os.path.splitext(reference_file.filename)[1].lower()
+            ref_path = os.path.join("temp", f"{ref_id}{ref_ext}")
+            with open(ref_path, "wb") as buffer:
+                shutil.copyfileobj(reference_file.file, buffer)
             
+            # Convert reference to image if PDF/DXF
+            if ref_ext == '.pdf':
+                pdf = pdfium.PdfDocument(ref_path)
+                page = pdf[0]
+                bitmap = page.render(scale=4)
+                pil_image = bitmap.to_pil()
+                reference_filename = f"{ref_id}.png"
+                reference_image_path = os.path.join("temp", reference_filename)
+                pil_image.save(reference_image_path)
+            elif ref_ext == '.dxf':
+                 from dxf_converter import convert_dxf_to_image
+                 reference_filename = f"{ref_id}.png"
+                 reference_image_path = os.path.join("temp", reference_filename)
+                 convert_dxf_to_image(ref_path, reference_image_path)
+            else:
+                 reference_filename = f"{ref_id}{ref_ext}"
+                 reference_image_path = ref_path
+            
+            log_debug(f"Saved reference image to {reference_image_path}")
+
         # Handle PDF to Image Conversion for Visuals
         display_image_filename = f"{filename_base}{ext}"
         
@@ -122,7 +160,8 @@ async def upload_file(
             log_debug(f"Converted PDF to image: {display_image_path}")
             
             # CRITICAL FIX: Analyze the IMAGE, not the PDF.
-            analysis_result = llm_processor.analyze_image(display_image_path)
+            # Use anyio to run the synchronous analyze_image in a separate thread
+            analysis_result = await anyio.to_thread.run_sync(llm_processor.analyze_image, display_image_path)
             
         elif ext == '.dxf':
             log_debug("Converting DXF to image...")
@@ -136,16 +175,18 @@ async def upload_file(
                 raise Exception("Failed to convert DXF to image")
                 
             log_debug(f"Converted DXF to image: {display_image_path}")
-            analysis_result = llm_processor.analyze_image(display_image_path)
+            # Use anyio to run the synchronous analyze_image in a separate thread
+            analysis_result = await anyio.to_thread.run_sync(llm_processor.analyze_image, display_image_path)
             
         else:
+            display_image_path = file_path
             # It's already an image
-            analysis_result = llm_processor.analyze_image(file_path)
+            # Use anyio to run the synchronous analyze_image in a separate thread
+            analysis_result = await anyio.to_thread.run_sync(llm_processor.analyze_image, file_path)
         
         log_debug("Analysis complete. Returning response.")
         
         # URL for the frontend to confirm what to show
-        # If it was a PDF, we point to the converted PNG
         image_url = f"http://localhost:8001/temp/{display_image_filename}"
         
         return {
@@ -154,7 +195,9 @@ async def upload_file(
             "features": analysis_result.get('features', []),
             "view_labels": analysis_result.get('view_labels', []),
             "metadata": analysis_result.get('metadata', {}),
-            "raw_ocr": [] # Not using local OCR
+            "primary_filename": display_image_filename,
+            "reference_filename": reference_filename,
+            "error": analysis_result.get('error')
         }
 
     except Exception as e:
@@ -169,6 +212,39 @@ async def upload_file(
             "features": [],
             "metadata": {}
         }
+
+@app.post("/compare")
+async def compare_drawings(
+    data: Dict,
+    x_api_key: str = Header(None)
+):
+    primary_filename = data.get("primary_filename")
+    reference_filename = data.get("reference_filename")
+    
+    log_debug(f"Received compare request for: {primary_filename} vs {reference_filename}")
+    
+    if not primary_filename or not reference_filename:
+        raise HTTPException(status_code=400, detail="Missing filenames for comparison")
+        
+    primary_path = os.path.join("temp", primary_filename)
+    reference_path = os.path.join("temp", reference_filename)
+    
+    if not os.path.exists(primary_path) or not os.path.exists(reference_path):
+        raise HTTPException(status_code=404, detail="Files not found for comparison")
+    
+    llm_processor = LLMProcessor(api_key=x_api_key)
+    
+    try:
+        # Use anyio to run comparison in a separate thread
+        comparison_result = await anyio.to_thread.run_sync(
+            llm_processor.compare_images, 
+            primary_path, 
+            reference_path
+        )
+        return comparison_result
+    except Exception as e:
+        log_debug(f"Error in compare_drawings: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ExportFeature(BaseModel):
     id: str
@@ -192,6 +268,7 @@ async def export_metadata_csv(data: ExportMetadataRequest):
         writer = csv.writer(output)
         writer.writerow(["Field", "Value"])
         
+        print(f"DEBUG: Processing {len(data.metadata)} metadata items for {data.filename}")
         for key, value in data.metadata.items():
             writer.writerow([key, str(value).strip()])
         
@@ -359,7 +436,7 @@ async def export_metadata_pdf(data: ExportMetadataRequest):
 @app.post("/export/csv")
 async def export_csv(data: ExportRequest):
     try:
-        print(f"DEBUG: Starting Full-Symbol CSV export for {data.filename}")
+        print(f"DEBUG: Starting CSV export for {data.filename} with {len(data.features)} features")
         log_debug(f"Starting CSV export for: {data.filename}")
         
         # Mapping to normalize diameter variants to a single standard Ø

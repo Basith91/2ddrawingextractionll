@@ -3,7 +3,7 @@ import { Ruler, FileText, Settings, Layers, Download, FileSpreadsheet, File as F
 import axios from 'axios';
 import './FeaturesPanel.css';
 
-export default function FeaturesPanel({ features, metadata, activeFeatureId, activeViewLabel, onFeatureSelect, onViewSelect, activeTab, onTabChange }) {
+export default function FeaturesPanel({ features, metadata, activeFeatureId, activeViewLabel, activeMetadataKey, onFeatureSelect, onViewSelect, onMetadataSelect, activeTab, onTabChange, onCompare, isComparing, hasReference }) {
     const [isExporting, setIsExporting] = useState(false);
 
     const handleExport = async (format) => {
@@ -29,15 +29,20 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
             }
 
             // Sanitize filename: remove characters that might cause download to fail
-            let filename = (metadata["Designation"] || "extraction_results")
+            const designationVal = metadata["Designation"]?.value || metadata["Designation"] || "extraction_results";
+            let filename = String(designationVal)
                 .replace(/[<>:"/\\|?*]/g, '_') // Remove invalid filename chars
                 .trim();
 
-            if (!filename) filename = "extraction_results";
+            if (!filename || filename === "[object Object]") filename = "extraction_results";
 
             // Prepare data for export
             const exportData = isMetadata ? {
-                metadata: metadata,
+                metadata: Object.entries(metadata).reduce((acc, [key, val]) => {
+                    // Extract .value if it's an object, otherwise use the value itself
+                    acc[key] = (typeof val === 'object' && val !== null) ? val.value : val;
+                    return acc;
+                }, {}),
                 filename: filename
             } : {
                 features: features.map(f => ({
@@ -168,6 +173,19 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
                     </div>
                 </div>
 
+                {hasReference && (
+                    <div className="comparison-tool">
+                        <button
+                            className={`compare-btn ${isComparing ? 'loading' : ''}`}
+                            onClick={onCompare}
+                            disabled={isComparing}
+                        >
+                            <Layers size={16} />
+                            {isComparing ? "Checking Omissions..." : "Check for Omissions"}
+                        </button>
+                    </div>
+                )}
+
                 {activeTab === 'features' ? (
                     <div className="features-list">
                         {features.length === 0 ? (
@@ -223,33 +241,74 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
                         <div className="metadata-section">
                             <h3 className="section-title">Identification & Documentation</h3>
                             <div className="metadata-grid">
-                                <MetaItem label="Designation" value={metadata["Designation"]} />
-                                <MetaItem label="Drawing Number" value={metadata["Drawing Number"]} />
-                                <MetaItem label="Revision" value={metadata["Revision"]} />
+                                <MetaItem
+                                    label="Designation"
+                                    value={metadata["Designation"]?.value || metadata["Designation"]}
+                                    onSelect={() => onMetadataSelect("Designation")}
+                                />
+                                <MetaItem
+                                    label="Drawing Number"
+                                    value={metadata["Drawing Number"]?.value || metadata["Drawing Number"]}
+                                    onSelect={() => onMetadataSelect("Drawing Number")}
+                                />
+                                <MetaItem
+                                    label="Revision"
+                                    value={metadata["Revision"]?.value || metadata["Revision"]}
+                                    onSelect={() => onMetadataSelect("Revision")}
+                                />
                             </div>
                         </div>
 
                         <div className="metadata-section">
                             <h3 className="section-title">Measurements & Units</h3>
                             <div className="metadata-grid">
-                                <MetaItem label="Unit System" value={metadata["Unit System"]} />
+                                <MetaItem
+                                    label="Unit System"
+                                    value={metadata["Unit System"]?.value || metadata["Unit System"]}
+                                    onSelect={() => onMetadataSelect("Unit System")}
+                                />
                                 <MetaItem
                                     label="Projection Method"
-                                    value={metadata["Projection Method"]}
-                                    icon={getProjectionIcon(metadata["Projection Method"])}
+                                    value={metadata["Projection Method"]?.value || metadata["Projection Method"]}
+                                    icon={getProjectionIcon(metadata["Projection Method"]?.value || metadata["Projection Method"])}
+                                    onSelect={() => onMetadataSelect("Projection Method")}
                                 />
-                                <MetaItem label="Weight" value={metadata["Weight"]} />
-                                <MetaItem label="Volume" value={metadata["Volume"]} />
-                                <MetaItem label="Scale" value={metadata["Scale"]} />
+                                <MetaItem
+                                    label="Weight"
+                                    value={metadata["Weight"]?.value || metadata["Weight"]}
+                                    onSelect={() => onMetadataSelect("Weight")}
+                                />
+                                <MetaItem
+                                    label="Volume"
+                                    value={metadata["Volume"]?.value || metadata["Volume"]}
+                                    onSelect={() => onMetadataSelect("Volume")}
+                                />
+                                <MetaItem
+                                    label="Scale"
+                                    value={metadata["Scale"]?.value || metadata["Scale"]}
+                                    onSelect={() => onMetadataSelect("Scale")}
+                                />
                             </div>
                         </div>
 
                         <div className="metadata-section">
                             <h3 className="section-title">Material & Manufacturing</h3>
                             <div className="metadata-grid">
-                                <MetaItem label="Material" value={metadata["Material"]} />
-                                <MetaItem label="General Tolerances" value={metadata["General Tolerances"]} />
-                                <MetaItem label="General Roughness" value={metadata["General Roughness"]} />
+                                <MetaItem
+                                    label="Material"
+                                    value={metadata["Material"]?.value || metadata["Material"]}
+                                    onSelect={() => onMetadataSelect("Material")}
+                                />
+                                <MetaItem
+                                    label="General Tolerances"
+                                    value={metadata["General Tolerances"]?.value || metadata["General Tolerances"]}
+                                    onSelect={() => onMetadataSelect("General Tolerances")}
+                                />
+                                <MetaItem
+                                    label="General Roughness"
+                                    value={metadata["General Roughness"]?.value || metadata["General Roughness"]}
+                                    onSelect={() => onMetadataSelect("General Roughness")}
+                                />
                             </div>
                         </div>
 
@@ -267,7 +326,12 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
                                             "Unit System", "Projection Method", "Weight", "Volume", "Scale",
                                             "Material", "General Tolerances", "General Roughness"
                                         ].includes(k)).map(([key, value]) => (
-                                            <MetaItem key={key} label={key} value={value} />
+                                            <MetaItem
+                                                key={key}
+                                                label={key}
+                                                value={value?.value || value}
+                                                onSelect={() => onMetadataSelect(key)}
+                                            />
                                         ))}
                                     </div>
                                 </div>
@@ -279,11 +343,23 @@ export default function FeaturesPanel({ features, metadata, activeFeatureId, act
     );
 }
 
-function MetaItem({ label, value, icon }) {
-    const displayValue = (!value || value === "null") ? "-" : value;
+function MetaItem({ label, value, icon, onSelect }) {
+    const isObject = typeof value === 'object' && value !== null;
+    const displayValue = isObject ? value.value : (value === "null" || !value ? "-" : value);
+
+    const handleClick = () => {
+        if (isObject && value.x == null) { // Check for x coordinate to determine if it's an old format object
+            alert(`Note: To see "${label}" highlighted on the drawing, please re-upload this drawing one time.`);
+        }
+        onSelect();
+    };
 
     return (
-        <div className="metadata-item-grid">
+        <div
+            className="metadata-item-grid"
+            onClick={handleClick}
+            style={{ cursor: 'pointer' }}
+        >
             <span className="meta-label">{label}</span>
             <div className="meta-value-container">
                 {icon && <span className="meta-icon">{icon}</span>}

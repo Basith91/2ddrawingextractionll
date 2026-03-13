@@ -55,42 +55,57 @@ class LLMProcessor:
             OUTPUT FORMAT:
             {
                 "features": [
-                    {"id": "1", "type": "DIMENSION|DIAMETER|RADIUS|ANGLE|HOLE CALLOUT|GD&T|TOLERANCE|CHAMFER|THREAD|ROUGHNESS", "value": "str", "x": int(0-1000), "y": int(0-1000)}
+                    {"id": "1", "type": "DIMENSION|GD&T|...", "value": "str", "x": 0-1000, "y": 0-1000}
                 ],
                 "view_labels": [
-                    {"id": "V1", "label": "V1/Front View", "x": int(0-1000), "y": int(0-1000)}
+                    {"id": "V1", "label": "V1/Front View", "x": 0-1000, "y": 0-1000}
                 ],
                 "metadata": {
-                    "Designation": "str", "Drawing Number": "str", "Revision": "str",
-                    "Unit System": "Metric/Inch", "Projection Method": "Third Angle/First Angle",
-                    "Weight": "str", "Volume": "str", "Scale": "str",
-                    "Material": "str", "General Tolerances": "str", "General Roughness": "str",
-                    "BOM": "Present/None"
+                    "Designation": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Drawing Number": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Revision": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Unit System": {"value": "Metric/Inch", "x": 0-1000, "y": 0-1000},
+                    "Projection Method": {"value": "Third Angle/First Angle", "x": 0-1000, "y": 0-1000},
+                    "Weight": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Volume": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Scale": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "Material": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "General Tolerances": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "General Roughness": {"value": "str", "x": 0-1000, "y": 0-1000},
+                    "BOM": {"value": "Present/None", "x": 0-1000, "y": 0-1000}
                 }
             }
+            
+            CRITICAL: For 'metadata', ALWAYS return an object with both 'value' and 'x','y' coordinates. 
+            Do NOT return a plain string for metadata fields.
 
             RULES:
-            1. FEATURES: Extract all dimensions, geometric tolerances (GD&T icons), and symbols on the drawing view.
+            1. FEATURES (CRITICAL - TOTAL EXHAUSTION):
+               - EXTRACT EVERY SINGLE dimension, geometric tolerance (GD&T icons), and symbol visible.
+               - DO NOT SKIP ANY DIMENSION. Pay special attention to "Micro-Dimensions": small numerical values (e.g., 1, 2, 0.5) near centerlines, gaps, or thicknesses that may not have long extension lines.
+               - CHECK ALL VIEWS: Front, Top, Side, Sections, Detail, and even the 3D/Isometric view if it contains any callouts or dimensions.
                - TYPES:
-                 DIMENSION (linear), DIAMETER (Ø), RADIUS (R), ANGLE (°), HOLE CALLOUT (e.g. 7 NOS, M6),
+                 DIMENSION (linear/angular), DIAMETER (Ø), RADIUS (R), ANGLE (°), 
+                 HOLE CALLOUT (e.g. 7 NOS, M6, Ø3.5 THROUGH), 
                  GD&T (frames like [⌖|0.05|A|B]), TOLERANCE (±), CHAMFER, THREAD, ROUGHNESS.
                - GD&T SPECIFIC: Return the EXACT SYMBOL (e.g. ⌖, ⏥, ○, ⫽, ⟂, e, ⏿, ⌓) and the FULL FRAME content as the value.
-                 DO NOT return words like "Position" or "Flatness". Return "⌖ 0.05 A B" or "[⌖|0.05|A|B]".
-               - IGNORE: View labels (SECTION A-A), Datum tags (A, B), Notes.
+               - IGNORE: View labels (SECTION A-A), Datum tags (A, B), Notes text block.
             
             2. VIEW DETECTION (CRITICAL):
-               - Identify the separate drawing views (e.g. Front, Top, Side, Isometric).
-               - IF LABELS EXIST: Extract the text (e.g. "FRONT VIEW", "SECTION A-A") and its coordinates.
-               - IF NO LABELS: Identify the visual CROSS-HAIR center of the geometry for that view and assign a label like "View 1 (Top Left)", "View 2 (Center)".
-               - OUTPUT: Return these as "view_labels" with (x, y) coordinates.
+                - Identify separate views and labels.
+                - Return "view_labels" with (x, y) coordinates for EVERY view label or centerline.
 
             3. METADATA (Title Block):
-               - Projection: Scan the Title Block for the Projection Symbol (Concentric Circles and a Trapezoid/Cone).
-                 * First Angle: The Trapezoid/Cone is on the LEFT of the Circles. (Symbol: [Cone] [Circles]) -> Return "First Angle"
-                 * Third Angle: The Circles are on the LEFT of the Trapezoid/Cone. (Symbol: [Circles] [Cone]) -> Return "Third Angle"
-               - Scale: Prefer view scale (1:1) over title block (NTS).
-               - Material: Extract code only (e.g. Al-6061).
-               - BOM: If no table lists parts, return "None".
+               - Scan the Title Block area for each field.
+               - For EACH field (Designation, Drawing Number, etc.), return the extracted "value" AND its (x, y) coordinates on the drawing.
+               - Projection: Scan the Title Block for the Projection Symbol.
+            
+            4. BOM DETECTION (CRITICAL):
+               - Check if there is a 'Bill of Materials' or 'Part List' table on the drawing (usually near the title block or top right).
+               - Only return "Present" if you see a MULTI-ROW TABLE with columns like 'ITEM', 'PART NO', 'QTY', 'NOMENCLATURE'.
+               - If only the single part shown in the drawing is described in the title block, then BOM is "None".
+               - Return "None" if NO multi-row list is found.
+               - DO NOT assume a BOM exists just because it is a mechanical part.
             """
             
             log_debug("Generating content with Gemini Vision...")
@@ -107,64 +122,81 @@ class LLMProcessor:
             # we must use a class-level lock.
             if not hasattr(LLMProcessor, '_global_lock'):
                 LLMProcessor._global_lock = threading.Lock()
+            
+            # Tracking status for the frontend
+            LLMProcessor._current_status = "Preparing drawing..."
 
-            # Models to try in order of preference (Fastest/Cheapest -> More Robust)
-            # Based on available_models.txt
+            # Verified Models Supported by the User's API Key (Prioritizing Gemini 1.5 Pro for Paid/Credit Tier)
             models_to_try = [
-                'gemini-2.0-flash',       # Newest/Fastest
-                'gemini-flash-latest',    # Stable fallback
-                'gemini-1.5-flash-latest' # frequent alias
+                'models/gemini-1.5-pro-latest',    # Primary (Stable 1.5 Pro - Best for Accuracy)
+                'models/gemini-1.5-pro',           # Alternate Pro
+                'models/gemini-flash-latest',      # Fallback (Stable 1.5 Flash)
+                'models/gemini-2.0-flash',        # Secondary (Fast)
+                'models/gemini-2.0-flash-lite',   # 2.0 Lite
+                'models/gemini-pro-latest',       # Legacy Pro Alias
             ]
             
             last_exception = None
+            response = None
 
-            # Acquire global lock to prevent parallel requests
+            # Acquire global lock to prevent parallel requests (critical for Free Tier)
+            LLMProcessor._current_status = "Waiting for queue..."
             with LLMProcessor._global_lock:
+                LLMProcessor._current_status = "Checking API limits..."
                 log_debug("Acquired lock. Processing request...")
                 
-                # 1. Pre-call delay to prevent burst limits
+                # Pre-call delay to prevent burst limits on a fresh session
                 time.sleep(2.0)
 
-                response = None
-                
-                for model_name in models_to_try:
-                    log_debug(f"Attempting with model: {model_name}")
+                for model_idx, model_name in enumerate(models_to_try):
+                    LLMProcessor._current_status = f"Trying model {model_idx + 1}/{len(models_to_try)}..."
+                    log_debug(f"STARTING sequence for: {model_name}")
                     
                     try:
-                        # Instantiate specific model for this attempt
                         current_model = genai.GenerativeModel(model_name)
                     except Exception as e:
-                         log_debug(f"Failed to instantiate {model_name}: {e}")
+                         log_debug(f"Instantiate Error ({model_name}): {e}")
                          continue
                     
-                    # Exponential Backoff Strategy
-                    max_retries = 3
+                    # Strategic Retry Logic
+                    max_retries = 10 
                     for attempt in range(max_retries):
                         try:
-                            # Generate content
+                            LLMProcessor._current_status = f"Generating content ({model_name})..."
                             response = current_model.generate_content([sample_file, prompt])
-                            log_debug(f"Success with {model_name}!")
-                            break # Break retry loop on success
+                            log_debug(f"SUCCESS with {model_name} on attempt {attempt+1}")
+                            LLMProcessor._current_status = "Processing results..."
+                            break 
                             
                         except Exception as e:
                             last_exception = e
                             error_str = str(e)
                             
-                            if "429" in error_str or "Yellow" in error_str or "ResourceExhausted" in error_str:
-                                # Rate Limit Hit - Wait and Retry
-                                wait_time = (2 ** attempt) + random.uniform(0, 1) # Exponential backoff + jitter
-                                log_debug(f"Rate Limit ({model_name}). Retrying in {wait_time:.2f}s...")
+                            # Log short snippet for debugging
+                            log_debug(f"Attempt {attempt+1} failed ({model_name}): {error_str[:60]}...")
+                            
+                            if "429" in error_str or "Quota" in error_str or "ResourceExhausted" in error_str:
+                                # High Latency Backoff for Free Tier (Wait 3, 6, 12, 24, 45...)
+                                wait_time = min(45, (3 * (2 ** attempt)) + random.uniform(0, 5))
+                                LLMProcessor._current_status = f"Quota reached. Waiting {int(wait_time)}s..."
+                                log_debug(f"QUOTA LIMIT. Cooling down for {wait_time:.1f}s...")
                                 time.sleep(wait_time)
+                            elif "404" in error_str or "NotFound" in error_str:
+                                # Skip to next model immediately
+                                log_debug(f"Model {model_name} NOT FOUND. Skipping.")
+                                break
                             else:
-                                # Non-retryable error (e.g., Invalid Argument/404) -> Try next model immediately
-                                log_debug(f"Error with {model_name}: {error_str}. Switching models...")
-                                break 
+                                # Server errors (500)
+                                time.sleep(3)
                     
                     if response:
-                        break # Break model loop if we got a response
+                        break # Successfully extracted!
 
                 if not response:
-                    raise last_exception or Exception("All models failed to generate content.")
+                    LLMProcessor._current_status = "Ready"
+                    log_debug("CRITICAL: All models and retries exhausted.")
+                    # Return a friendly message for the UI
+                    raise Exception("AI Quota reached. Please wait 60 seconds and click upload again.")
             
             log_debug("Response received from Gemini.")
             
@@ -172,6 +204,10 @@ class LLMProcessor:
             text_response = response.text.replace("```json", "").replace("```", "").strip()
             
             log_debug(f"Raw Response Length: {len(text_response)}")
+            if not text_response:
+                log_debug("Empty response from Gemini")
+                return {"features": [], "metadata": {}, "error": "Empty response from Gemini"}
+
             try:
                 with open("debug_llm_response.txt", "w", encoding="utf-8") as f:
                     f.write(text_response)
@@ -183,8 +219,13 @@ class LLMProcessor:
                 start = text_response.find("{")
                 end = text_response.rfind("}") + 1
                 text_response = text_response[start:end]
-
-            result = json.loads(text_response)
+            
+            try:
+                result = json.loads(text_response)
+            except json.JSONDecodeError as je:
+                log_debug(f"JSON Decode Error: {je}. Raw Text: {text_response[:100]}...")
+                # Attempt to extract anything that looks like JSON if the above failed
+                return {"features": [], "metadata": {}, "error": f"Invalid JSON response: {str(je)}"}
             
             # --- SPATIAL CLASSIFICATION (VIEW BUCKETING) ---
             features = result.get('features', [])
@@ -276,10 +317,34 @@ class LLMProcessor:
                     "y": vy / 10.0
                 })
 
+            # PROCESS METADATA (Normalize coordinates)
+            metadata = result.get('metadata', {})
+            processed_metadata = {}
+            for key, data in metadata.items():
+                if isinstance(data, dict):
+                    val = data.get('value', '-')
+                    mx = data.get('x')
+                    my = data.get('y')
+                    
+                    # Normalize 0-1000 -> 0-100
+                    if mx is not None: mx = mx / 10.0
+                    if my is not None: my = my / 10.0
+                    
+                    processed_metadata[key] = {
+                        "value": val,
+                        "x": mx if mx is not None else None,
+                        "y": my if my is not None else None
+                    }
+                else:
+                    # Fallback for old structure or strings
+                    processed_metadata[key] = {"value": data, "x": None, "y": None}
+
             result['features'] = processed_features
             result['view_labels'] = processed_view_labels
+            result['metadata'] = processed_metadata
             
             log_debug(f"JSON parsed successfully. Feature count: {len(result.get('features', []))}")
+            LLMProcessor._current_status = "Ready"
             return result
 
         except Exception as e:
@@ -295,5 +360,111 @@ class LLMProcessor:
             except:
                 pass
 
+            LLMProcessor._current_status = "Ready"
             return {"features": [], "metadata": {}, "error": str(e)}
 
+    def compare_images(self, primary_image_path, reference_image_path):
+        """
+        Compares the primary (active) image against a reference image.
+        Detects missing dimensions or features from the reference that are not in the primary.
+        """
+        def log_debug(msg):
+            try:
+                with open("backend_debug.log", "a", encoding="utf-8") as f:
+                    import datetime
+                    timestamp = datetime.datetime.now().isoformat()
+                    f.write(f"[{timestamp}] [LLM-COMPARE] {msg}\n")
+            except:
+                pass
+
+        if not self.model:
+            return {"error": "LLM API Key missing", "omissions": []}
+
+        try:
+            log_debug(f"Uploading images for comparison: {primary_image_path}, {reference_image_path}")
+            
+            # Upload both files
+            primary_file = genai.upload_file(path=primary_image_path, display_name="Active Drawing")
+            reference_file = genai.upload_file(path=reference_image_path, display_name="Original Reference")
+            
+            prompt = """
+            You are an expert Engineering Drawing Quality Auditor.
+            COMPARE IMAGE 1 (Original Reference) with IMAGE 2 (Active Drawing).
+
+            TASK:
+            1. Report EVERY SINGLE text, dimension, symbol, or note that is in Image 1 but is MISSING or DIFFERENT in Image 2.
+            2. SCAN THE ENTIRE IMAGE:
+               - Dimensions and GD&T features.
+               - Title Block (Bottom Right): Mass, Sheet Size, Designation, etc.
+               - Extended Data/Technical Data: Lists of notes, technical specs, material properties.
+               - Administrative Data: Dates, names, material types.
+               - Document References and Remarks.
+               - General Notes and Revision History.
+            3. CRITICAL: If a value has CHANGED (e.g., Image 1 shows 'A2' and Image 2 shows 'A3'), report the 'A2' value from Image 1 as an omission at its original position.
+
+            OUTPUT FORMAT (STRICT JSON):
+            {
+                "omissions": [
+                    {
+                        "id": "M1",
+                        "value": "The EXACT missing or original text/number from Image 1",
+                        "x": 0-1000, 
+                        "y": 0-1000,
+                        "description": "Short reasoning"
+                    }
+                ]
+            }
+
+            CRITICAL RULES:
+            - TOTAL EXHAUSTIVENESS: If even a single character is different or hidden, report it.
+            - Provide the EXACT COORDINATES from Image 1.
+            - Ensure the 'value' matches what was in Image 1 word-for-word.
+            - Be EXTREMELY PRECISE with small text in the 'Notes' or 'Technical data' sections.
+            """
+
+            log_debug("Calling Gemini for comparison...")
+            
+            # Re-use the same priority logic (Pro is prioritized now)
+            models_to_try = [
+                'models/gemini-1.5-pro-latest',
+                'models/gemini-1.5-pro',
+                'models/gemini-flash-latest'
+            ]
+            
+            response = None
+            for model_name in models_to_try:
+                try:
+                    current_model = genai.GenerativeModel(model_name)
+                    response = current_model.generate_content([reference_file, primary_file, prompt])
+                    break
+                except Exception as e:
+                    log_debug(f"Model {model_name} failed: {str(e)}")
+            
+            if not response:
+                raise Exception("All models failed for comparison.")
+
+            text_response = response.text.replace("```json", "").replace("```", "").strip()
+            
+            # Clean JSON
+            if "{" in text_response:
+                start = text_response.find("{")
+                end = text_response.rfind("}") + 1
+                text_response = text_response[start:end]
+            
+            log_debug(f"Comparison raw response: {text_response[:1000]}...")
+            
+            result = json.loads(text_response)
+            omissions = result.get('omissions', [])
+
+            # Normalize coordinates (0-1000 -> 0-100)
+            log_debug(f"Comparison complete. Found {len(omissions)} omissions.")
+            for o in omissions:
+                log_debug(f"Omission: {o.get('value')} at ({o.get('x')}, {o.get('y')})")
+                if 'x' in o: o['x'] = o['x'] / 10.0
+                if 'y' in o: o['y'] = o['y'] / 10.0
+            
+            return {"omissions": omissions}
+
+        except Exception as e:
+            log_debug(f"Comparison EXCEPTION: {str(e)}")
+            return {"error": str(e), "omissions": []}

@@ -1,42 +1,20 @@
 import { useState, useRef } from 'react';
-import { Upload as UploadIcon, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { Upload as UploadIcon, FileText, CheckCircle, XCircle, FileWarning, ShieldCheck } from 'lucide-react';
 import './Upload.css';
 
 export default function Upload({ onUploadSuccess }) {
-  const [dragActive, setDragActive] = useState(false);
+  const [primaryFile, setPrimaryFile] = useState(null);
+  const [referenceFile, setReferenceFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
-  const inputRef = useRef(null);
 
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
+  const primaryInputRef = useRef(null);
+  const referenceInputRef = useRef(null);
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFile(e.dataTransfer.files[0]);
-    }
-  };
+  const handleFileChange = (e, type) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-  const handleChange = (e) => {
-    e.preventDefault();
-    if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
-    }
-  };
-
-  const handleFile = async (file) => {
-    const validTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
-    // DXF often has empty type or specific CAD types, so checking extension is safer
     const isDxf = file.name.toLowerCase().endsWith('.dxf');
     const isPdf = file.name.toLowerCase().endsWith('.pdf');
     const isImage = file.type.startsWith('image/');
@@ -47,64 +25,98 @@ export default function Upload({ onUploadSuccess }) {
     }
 
     setError(null);
-    setUploading(true);
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      // Just pass the file to the parent component
-      // The parent (App.jsx) handles the actual API upload
-      onUploadSuccess({ filename: file.name, file: file });
-
-    } catch (err) {
-      setError('Failed to process file.');
-    } finally {
-      setUploading(false);
+    if (type === 'primary') {
+      setPrimaryFile(file);
+    } else {
+      setReferenceFile(file);
     }
   };
 
-  const onButtonClick = () => {
-    inputRef.current.click();
+  const handleStartAnalysis = () => {
+    if (!primaryFile) {
+      setError('Please select a primary drawing to analyze.');
+      return;
+    }
+    setUploading(true);
+    onUploadSuccess({
+      primaryFile,
+      referenceFile
+    });
   };
 
   return (
-    <div className="upload-container">
-      <div
-        className={`upload-area ${dragActive ? 'drag-active' : ''}`}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-        onClick={onButtonClick}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          className="file-input"
-          accept=".pdf,.dxf,.png,.jpg,.jpeg"
-          onChange={handleChange}
-        />
-
-        {uploading ? (
-          <div className="upload-status">
-            <div className="spinner"></div>
-            <p>Uploading & Processing...</p>
+    <div className="upload-dashboard">
+      <div className="upload-grid">
+        {/* Primary Upload */}
+        <div
+          className={`upload-card ${primaryFile ? 'has-file' : ''}`}
+          onClick={() => primaryInputRef.current.click()}
+        >
+          <input
+            type="file"
+            ref={primaryInputRef}
+            onChange={(e) => handleFileChange(e, 'primary')}
+            hidden
+            accept=".pdf,.dxf,.png,.jpg,.jpeg"
+          />
+          <div className="card-icon primary">
+            {primaryFile ? <CheckCircle size={32} /> : <FileText size={32} />}
           </div>
-        ) : (
-          <div className="upload-placeholder">
-            <UploadIcon size={48} className="upload-icon" />
-            <h3>Click to upload or drag and drop</h3>
-            <p>PDF or DXF Drawings</p>
+          <div className="card-content">
+            <h3>Active Drawing</h3>
+            <p>{primaryFile ? primaryFile.name : 'Upload the drawing with missing data'}</p>
+          </div>
+          {primaryFile && <span className="badge">Ready</span>}
+        </div>
+
+        {/* Reference Upload */}
+        <div
+          className={`upload-card reference ${referenceFile ? 'has-file' : ''}`}
+          onClick={() => referenceInputRef.current.click()}
+        >
+          <input
+            type="file"
+            ref={referenceInputRef}
+            onChange={(e) => handleFileChange(e, 'reference')}
+            hidden
+            accept=".pdf,.dxf,.png,.jpg,.jpeg"
+          />
+          <div className="card-icon reference">
+            {referenceFile ? <ShieldCheck size={32} /> : <FileWarning size={32} />}
+          </div>
+          <div className="card-content">
+            <h3>Original Reference</h3>
+            <p>{referenceFile ? referenceFile.name : 'Upload the original (Optional Reference)'}</p>
+          </div>
+          {referenceFile && <span className="badge ref">Reference Set</span>}
+        </div>
+      </div>
+
+      <div className="upload-actions">
+        {error && (
+          <div className="error-tip">
+            <XCircle size={16} /> {error}
           </div>
         )}
+
+        <button
+          className={`start-btn ${!primaryFile ? 'disabled' : ''}`}
+          disabled={!primaryFile || uploading}
+          onClick={handleStartAnalysis}
+        >
+          {uploading ? (
+            <><div className="btn-spinner"></div> Processing...</>
+          ) : (
+            <><UploadIcon size={20} /> Start Comprehensive Analysis</>
+          )}
+        </button>
+
+        <p className="upload-hint">
+          {referenceFile
+            ? "Comparison mode enabled. AI will detect omissions against the reference."
+            : "Standard extraction mode. Upload a reference above to check for missing data."}
+        </p>
       </div>
-      {error && (
-        <div className="error-message">
-          <XCircle size={20} />
-          <span>{error}</span>
-        </div>
-      )}
     </div>
   );
 }

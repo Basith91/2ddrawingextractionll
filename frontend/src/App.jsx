@@ -10,6 +10,7 @@ function App() {
   const [file, setFile] = useState(null);
   const [activeFeatureId, setActiveFeatureId] = useState(null);
   const [activeViewLabel, setActiveViewLabel] = useState(null); // New state for active view
+  const [activeMetadataKey, setActiveMetadataKey] = useState(null); // New state for metadata highlight
   const [features, setFeatures] = useState([]);
   const [viewLabels, setViewLabels] = useState([]);
   const [metadata, setMetadata] = useState({});
@@ -18,6 +19,13 @@ function App() {
   const [uploadedImageUrl, setUploadedImageUrl] = useState(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
   const [showApiKeyModal, setShowApiKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
+  const [backendStatus, setBackendStatus] = useState('Ready');
+
+  // NEW: Comparison States
+  const [primaryFilename, setPrimaryFilename] = useState(null);
+  const [referenceFilename, setReferenceFilename] = useState(null);
+  const [omissions, setOmissions] = useState([]);
+  const [isComparing, setIsComparing] = useState(false);
 
   const handleApiKeySubmit = (key) => {
     setApiKey(key);
@@ -25,65 +33,103 @@ function App() {
     setShowApiKeyModal(false);
   };
 
-  const handleUploadSuccess = async ({ filename, file: uploadedFile }) => {
-    setFile(uploadedFile);
+  // Poll backend status when processing
+  useEffect(() => {
+    let interval;
+    if (isProcessing) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch('http://localhost:8001/status');
+          const data = await res.json();
+          if (data.status) setBackendStatus(data.status);
+        } catch (e) {
+          console.error("Status check failed", e);
+        }
+      }, 2000);
+    } else {
+      setBackendStatus('Ready');
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
+
+  const handleUploadSuccess = async ({ primaryFile, referenceFile }) => {
+    setFile(primaryFile);
     setIsProcessing(true);
-    setActiveViewLabel(null); // Reset on new upload
+    setActiveViewLabel(null);
     setActiveFeatureId(null);
+    setOmissions([]);
+
+    const previewUrl = URL.createObjectURL(primaryFile);
+    setUploadedImageUrl(previewUrl);
 
     const formData = new FormData();
-    formData.append("file", uploadedFile);
-
-    // DEBUG: Alert to confirm function is called
-    alert(`Starting upload for: ${filename}`);
+    formData.append("file", primaryFile);
+    if (referenceFile) {
+      formData.append("reference_file", referenceFile);
+    }
 
     try {
       const response = await fetch('http://localhost:8001/upload', {
         method: 'POST',
-        headers: {
-          'x-api-key': apiKey
-        },
+        headers: { 'x-api-key': apiKey },
         body: formData,
       });
 
       if (!response.ok) throw new Error('Upload failed');
-
       const data = await response.json();
-
-      // Update the drawing viewer with the real image URL from backend
-      if (data.url) {
-        // Force a timestamp to avoid caching issues if same filename
-        // But data.url usually points to a unique temp file
-        // We need to pass this URL to DrawingViewer
-        // DrawingViewer takes 'file' object currently, we should change it or 
-        // add a new prop 'imageUrl'
-      }
 
       setFeatures(data.features || []);
       setViewLabels(data.view_labels || []);
       setMetadata(data.metadata || {});
+      setPrimaryFilename(data.primary_filename);
+      setReferenceFilename(data.reference_filename);
 
-      // We need to pass the URL to the viewer. Let's add a state for it.
-      // Or hack it into the checked file object? No, better to have clean state.
-      // But for now, let's just modify the `file` state logic in DrawingViewer or pass a prop.
-      // Let's modify App to hold imageUrl state.
-      setUploadedImageUrl(data.url);
+      if (data.url) setUploadedImageUrl(data.url);
+      if (data.error) alert(`Analysis Error: ${data.error}`);
 
     } catch (err) {
       console.error("Processing error:", err);
-      // Fallback mock data if backend fails or no OCR
-      setFeatures([
-        { id: 1, value: "Error: " + err.message, type: "Error", x: 50, y: 50 },
-        { id: 2, value: "Check Backend Logs", type: "Error", x: 50, y: 60 }
-      ]);
-      setMetadata({
-        "Designation": "Error - Check Backend",
-        "Drawing Number": "Connection Failed?",
-        "Revision": "-"
-      });
-      alert(`Upload Failed: ${err.message}. Ensure backend is running.`);
+      setFeatures([{ id: 1, value: "Error: " + err.message, type: "Error", x: 50, y: 50 }]);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleCompare = async () => {
+    if (!primaryFilename || !referenceFilename) return;
+
+    setIsComparing(true);
+    setBackendStatus("Comparing drawings...");
+
+    try {
+      const response = await fetch('http://localhost:8001/compare', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey
+        },
+        body: JSON.stringify({
+          primary_filename: primaryFilename,
+          reference_filename: referenceFilename
+        }),
+      });
+
+      if (!response.ok) throw new Error('Comparison failed');
+      const data = await response.json();
+
+      setOmissions(data.omissions || []);
+      if (data.omissions?.length > 0) {
+        alert(`Found ${data.omissions.length} missing dimensions! They are highlighted in red.`);
+      } else {
+        alert("No omissions found! The drawing matches the reference perfectly.");
+      }
+
+    } catch (err) {
+      console.error("Comparison error:", err);
+      alert("Failed to compare drawings: " + err.message);
+    } finally {
+      setIsComparing(false);
+      setBackendStatus("Ready");
     }
   };
 
@@ -93,6 +139,10 @@ function App() {
 
   const handleViewSelect = (viewName) => {
     setActiveViewLabel(viewName === activeViewLabel ? null : viewName); // Toggle
+  };
+
+  const handleMetadataSelect = (key) => {
+    setActiveMetadataKey(key === activeMetadataKey ? null : key); // Toggle
   };
 
   return (
@@ -117,40 +167,49 @@ function App() {
             <Upload onUploadSuccess={handleUploadSuccess} />
           </div>
         ) : (
-          isProcessing ? (
-            <div className="processing-view">
-              <div className="processing-spinner"></div>
-              <h2>Analyzing Drawing...</h2>
-              <p>Identifying dimensions, tolerances, and GD&T features using Gemini LLM</p>
-            </div>
-          ) : (
-            <div className="workspace-view">
-              <div className="workspace-main">
-                <DrawingViewer
-                  file={file}
-                  imageUrl={uploadedImageUrl}
-                  features={features}
-                  viewLabels={viewLabels}
-                  activeFeatureId={activeFeatureId}
-                  activeViewLabel={activeViewLabel}
-                  onFeatureSelect={handleFeatureSelect}
-                  showBalloons={activeTab === 'features'}
-                />
+          <div className="workspace-view">
+            {isProcessing && (
+              <div className="processing-overlay">
+                <div className="processing-card">
+                  <div className="processing-spinner"></div>
+                  <h2>Analyzing Drawing...</h2>
+                  <p className="subtitle-text">Identifying dimensions, tolerances, and GD&T features using Gemini LLM</p>
+                </div>
               </div>
-              <div className="workspace-sidebar">
-                <FeaturesPanel
-                  features={features}
-                  metadata={metadata}
-                  activeFeatureId={activeFeatureId}
-                  activeViewLabel={activeViewLabel}
-                  onFeatureSelect={handleFeatureSelect}
-                  onViewSelect={handleViewSelect}
-                  activeTab={activeTab}
-                  onTabChange={setActiveTab}
-                />
-              </div>
+            )}
+            <div className="workspace-main">
+              <DrawingViewer
+                file={file}
+                imageUrl={uploadedImageUrl}
+                features={features}
+                viewLabels={viewLabels}
+                metadata={metadata}
+                omissions={omissions}
+                activeFeatureId={activeFeatureId}
+                activeViewLabel={activeViewLabel}
+                activeMetadataKey={activeMetadataKey}
+                onFeatureSelect={handleFeatureSelect}
+                showBalloons={activeTab === 'features'}
+              />
             </div>
-          )
+            <div className="workspace-sidebar">
+              <FeaturesPanel
+                features={features}
+                metadata={metadata}
+                activeFeatureId={activeFeatureId}
+                activeViewLabel={activeViewLabel}
+                activeMetadataKey={activeMetadataKey}
+                onFeatureSelect={handleFeatureSelect}
+                onViewSelect={handleViewSelect}
+                onMetadataSelect={handleMetadataSelect}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                onCompare={handleCompare}
+                isComparing={isComparing}
+                hasReference={!!referenceFilename}
+              />
+            </div>
+          </div>
         )}
       </main>
     </div>
