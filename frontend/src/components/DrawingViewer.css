@@ -150,42 +150,48 @@
 /* --- OMISSION BOX --- */
 .omission-box {
     position: absolute;
-    border: 1.5px dashed #ef4444;
-    background: rgba(255, 255, 255, 0.4);
+    border: 1px dashed #ef4444;
+    background: rgba(255, 255, 255, 0.6);
     border-radius: 2px;
-    padding: 2px 4px;
+    padding: 2px 6px;
     transform: translate(-50%, -50%);
     pointer-events: auto;
-    z-index: 100;
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
-    animation: box-pulse 2.5s infinite ease-in-out;
+    z-index: 1000;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
+    animation: box-pulse 3s infinite ease-in-out;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    max-width: 200px;
 }
 
 .omission-content {
     color: #ef4444;
-    font-weight: 800;
-    font-size: 14px;
-    text-shadow: 0 0 3px rgba(255, 255, 255, 1);
-    white-space: nowrap;
+    font-weight: 700;
+    font-size: 11px;
+    text-shadow: 0 0 2px rgba(255, 255, 255, 1);
+    text-align: center;
+    line-height: 1.2;
+    word-break: break-word;
 }
 
 .omission-label {
     position: absolute;
-    top: -20px;
-    font-size: 9px;
-    font-weight: 700;
+    bottom: calc(100% + 6px);
+    font-size: 10px;
+    font-weight: 600;
     color: white;
     background: #ef4444;
-    padding: 1px 4px;
-    border-radius: 2px;
-    white-space: nowrap;
+    padding: 3px 8px;
+    border-radius: 4px;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: opacity 0.25s ease;
     pointer-events: none;
+    width: max-content;
+    max-width: 250px;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
 .omission-box:hover .omission-label {

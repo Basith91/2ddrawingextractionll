@@ -388,38 +388,41 @@ class LLMProcessor:
             reference_file = genai.upload_file(path=reference_image_path, display_name="Original Reference")
             
             prompt = """
-            You are an expert Engineering Drawing Quality Auditor.
-            COMPARE IMAGE 1 (Original Reference) with IMAGE 2 (Active Drawing).
+            You are a Paranoid Engineering Quality Auditor. 
+            IMAGE 1 (Reference) is the perfect source of truth.
+            IMAGE 2 (Active Drawing) is a copy that might have mistakes.
 
-            TASK:
-            1. Report EVERY SINGLE text, dimension, symbol, or note that is in Image 1 but is MISSING or DIFFERENT in Image 2.
-            2. SCAN THE ENTIRE IMAGE:
-               - Dimensions and GD&T features.
-               - Title Block (Bottom Right): Mass, Sheet Size, Designation, etc.
-               - Extended Data/Technical Data: Lists of notes, technical specs, material properties.
-               - Administrative Data: Dates, names, material types.
-               - Document References and Remarks.
-               - General Notes and Revision History.
-            3. CRITICAL: If a value has CHANGED (e.g., Image 1 shows 'A2' and Image 2 shows 'A3'), report the 'A2' value from Image 1 as an omission at its original position.
+            TASK: Perform a CHARACTER-BY-CHARACTER, LINE-BY-LINE audit of IMAGE 2 against IMAGE 1.
+            
+            CHECKLIST FOR OMMISSIONS/CHANGES:
+            1. EXTENDED DATA SECTION (Numbered List): 
+               - Check every number: 1, 2, 3, 4, 5, 6, 7...
+               - If Image 1 has '7. Finish: Natural' and Image 2 stops at 6, report point 7 as MISSING.
+            2. TITLE BLOCK & ADMINISTRATIVE DATA:
+               - Compare every single field: Mass, Sheet Size, Material, Revision, Dates, etc.
+               - If any value is different or missing, report it.
+            3. TECHNICAL DATA & DOCUMENT REFERENCES:
+               - Verify every line of text in these sections. 
+            4. DRAWING AREA:
+               - Dimensions, GD&T, Balloons, Arrowheads.
+               - If a balloon or dimension line is gone, report it.
+
+            GOLDEN RULE: If a person could see it in Image 1 but cannot find it in EXACTLY the same spot or with the same value in Image 2, it IS AN OMISSION.
 
             OUTPUT FORMAT (STRICT JSON):
             {
                 "omissions": [
                     {
                         "id": "M1",
-                        "value": "The EXACT missing or original text/number from Image 1",
-                        "x": 0-1000, 
-                        "y": 0-1000,
-                        "description": "Short reasoning"
+                        "value": "The EXACT word-for-word text from Image 1",
+                        "x": 0-1000 (relative to Image 1),
+                        "y": 0-1000 (relative to Image 1),
+                        "description": "Specific reason (e.g. 'Line 7 of Extended Data is missing')"
                     }
                 ]
             }
 
-            CRITICAL RULES:
-            - TOTAL EXHAUSTIVENESS: If even a single character is different or hidden, report it.
-            - Provide the EXACT COORDINATES from Image 1.
-            - Ensure the 'value' matches what was in Image 1 word-for-word.
-            - Be EXTREMELY PRECISE with small text in the 'Notes' or 'Technical data' sections.
+            TOTAL EXHAUSTIVENESS REQUIRED. DO NOT SKIP ANY SMALL TEXT.
             """
 
             log_debug("Calling Gemini for comparison...")
